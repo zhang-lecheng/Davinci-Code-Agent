@@ -53,6 +53,8 @@ class DaVinciCodeGameEnvironment:
 
     def _initialize_game(self):
         """设置游戏变量的初始状态。"""
+        self.black_joker = random.uniform(-0.5, 12)
+        self.white_joker = random.uniform(-0.5, 12)
         # 初始化牌堆：黑色卡牌 (0-11)，白色卡牌 (0-11)，以及百搭牌 (-)
         self.deck = [f"B{i}" for i in range(12)] + [f"W{i}" for i in range(12)] + ["B-", "W-"]
         random.shuffle(self.deck)
@@ -111,7 +113,11 @@ class DaVinciCodeGameEnvironment:
 
         if value == '-':
             # 百搭牌最小：B- < W-
-            return -1.0 if color == 'B' else -0.5
+            if color == 'B':
+                return self.black_joker
+            elif color == 'W':
+                return self.white_joker
+            #return -1.0 if color == 'B' else -0.5
         try:
             num = int(value)
             # 数字优先，颜色次之（黑色 < 白色）
