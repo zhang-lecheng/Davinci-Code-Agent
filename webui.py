@@ -7,10 +7,9 @@ st.set_page_config(layout="wide", page_title="达芬奇密码")
 import copy
 import os
 import random # 导入 random 模块
-import time   # 导入 time 模块
+import datetime # <--- 新增：导入 datetime 模块
 
 # 确保 DaVinciCodeGameEnvironment 类在 env.py 文件中
-# *** 已根据用户确认修改导入语句 ***
 try:
     from env import DaVinciCodeGameEnvironment # 从 env.py 导入
 except ImportError:
@@ -18,7 +17,6 @@ except ImportError:
     st.stop() # 停止执行
 
 # --- 样式定义 ---
-# 使用 st.markdown 注入 CSS 来美化卡牌和按钮
 st.markdown("""
 <style>
     /* 卡牌基础样式 (HTML) */
@@ -61,46 +59,51 @@ st.markdown("""
         opacity: 0.8;
         border-style: dashed;
     }
+    /* 已揭示标签样式 */
+    .revealed-caption {
+        font-size: 0.7em;
+        text-align: center;
+        margin-top: 2px;
+        color: #555; /* 标签颜色 */
+    }
 
     /* Streamlit 按钮的基本形状和大小调整 */
     div[data-testid="stButton"] > button {
-        border-radius: 8px !important; /* 圆角 */
-        padding: 5px !important; /* 内边距 */
-        margin: 5px !important; /* 外边距 */
-        width: 70px !important; /* 宽度 */
-        height: 95px !important; /* 高度 */
+        border-radius: 8px !important;
+        padding: 5px !important;
+        margin: 5px !important;
+        width: 70px !important;
+        height: 95px !important;
         display: inline-flex !important;
         justify-content: center !important;
         align-items: center !important;
         text-align: center !important;
-        font-size: 1.6em !important; /* 字体大小 */
+        font-size: 1.6em !important;
         font-weight: bold !important;
         box-shadow: 2px 2px 5px rgba(0,0,0,0.1) !important;
         line-height: 1.2 !important;
         transition: background-color 0.2s ease !important;
     }
 
-    /* --- 新增：针对包裹层的样式 --- */
+    /* 包裹按钮的 div 样式 */
     .black-card-button-wrapper, .white-card-button-wrapper {
-        display: inline-block; /* 使包裹层适应按钮大小 */
+        display: inline-block;
         margin: 0;
         padding: 0;
-        line-height: 0; /* 可能有助于对齐 */
+        line-height: 0;
     }
 
-    /* --- 新增：特定按钮颜色样式 --- */
+    /* 特定按钮颜色样式 */
     .black-card-button-wrapper button {
-        background-color: #333333 !important; /* 黑色背景 */
-        color: #ffffff !important;           /* 白色文字 */
-        border: 2px solid #555555 !important; /* 深色边框 */
+        background-color: #333333 !important;
+        color: #ffffff !important;
+        border: 2px solid #555555 !important;
     }
     .white-card-button-wrapper button {
-        background-color: #ffffff !important; /* 白色背景 */
-        color: #333333 !important;           /* 黑色文字 */
-        border: 2px solid #cccccc !important; /* 浅色边框 */
+        background-color: #ffffff !important;
+        color: #333333 !important;
+        border: 2px solid #cccccc !important;
     }
-
-    /* 鼠标悬停时改变按钮外观 (可选) */
     .black-card-button-wrapper button:hover {
         background-color: #555555 !important;
         border-color: #777777 !important;
@@ -118,23 +121,36 @@ st.markdown("""
         margin-top: 15px;
         background-color: #f9f9f9;
     }
+    /* 用于显示抽到牌的容器 */
+    .drawn-card-display {
+         margin-top: 15px;
+         padding: 10px;
+         border: 1px dashed #ccc;
+         border-radius: 5px;
+         display: flex; /* 使用 flex 布局 */
+         flex-direction: column; /* 垂直排列 */
+         align-items: center; /* 水平居中 */
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # --- 辅助函数 ---
 
-def format_card_html(card_value, revealed, is_opponent):
-    """生成单张卡牌的 HTML 表示 (用于显示非交互式卡牌)"""
-    if card_value is None: return "" # 处理空值
+def format_card_html(card_value, revealed, is_opponent, is_drawn_card_display=False):
+    """生成单张卡牌的 HTML 表示。"""
+    if card_value is None: return ""
     if not isinstance(card_value, str) or len(card_value) < 2:
-        return f'<div class="card white-card">?</div>' # 显示错误状态
+        return f'<div class="card white-card">?</div>'
 
     color_char = card_value[0]
     number = card_value[1:]
     card_class = "black-card" if color_char == 'B' else "white-card"
     content = ""
 
-    if revealed:
+    if is_drawn_card_display:
+        content = number
+        revealed = True
+    elif revealed:
         content = number
     elif is_opponent:
         content = "?"
@@ -149,7 +165,12 @@ def format_card_html(card_value, revealed, is_opponent):
 
     if not content: content = "?" if not revealed else number
 
-    return f'<div class="card {card_class}" style="color: {text_color};">{content}</div>'
+    card_html = f'<div class="card {card_class}" style="color: {text_color};">{content}</div>'
+
+    if not is_opponent and revealed and not is_drawn_card_display:
+        return f'<div>{card_html}<div class="revealed-caption">(已揭示)</div></div>'
+    else:
+        return card_html
 
 def display_hand(label, hand, revealed_list, is_opponent_hand):
     """显示一手牌，对手隐藏牌使用带样式的按钮"""
@@ -176,31 +197,23 @@ def display_hand(label, hand, revealed_list, is_opponent_hand):
         with cols[i]:
             revealed = revealed_list[i]
             if is_opponent_hand and not revealed:
-                 # 对手隐藏的牌显示为带样式的可点击按钮
                  color_char = card[0]
                  button_key = f"guess_{i}"
                  button_text = "B ?" if color_char == 'B' else "W ?"
                  button_help = f"猜测位置 {i} 的牌"
-
-                 # 使用 Markdown 包裹按钮以应用 CSS 类
                  wrapper_class = "black-card-button-wrapper" if color_char == 'B' else "white-card-button-wrapper"
-                 # 检查当前是否轮到人类玩家操作，如果不是，则禁用按钮
-                 is_human_turn_for_button = (st.session_state.game_state.get('current_player') == 0) # 假设人类是玩家0
+                 is_human_turn_for_button = (st.session_state.game_state.get('current_player') == 0)
 
                  st.markdown(f'<div class="{wrapper_class}">', unsafe_allow_html=True)
-                 # 只有在轮到人类玩家时才启用按钮点击功能
                  if st.button(button_text, key=button_key, help=button_help, disabled=not is_human_turn_for_button):
-                     if is_human_turn_for_button: # 双重检查，确保回调只在启用时触发
+                     if is_human_turn_for_button:
                          st.session_state.selected_guess_index = i
-                         st.session_state.guess_color = 'B' # 默认猜测输入
-                         st.session_state.guess_value = '0' # 默认猜测输入
+                         st.session_state.guess_color = 'B'
+                         st.session_state.guess_value = '0'
                          st.rerun()
-                     else:
-                         st.warning("现在不是你的回合！") # 理论上不会触发，因为按钮已禁用
                  st.markdown('</div>', unsafe_allow_html=True)
 
             else:
-                # 显示玩家自己的牌或对手已揭示的牌 (使用 HTML)
                 st.markdown(format_card_html(card, revealed, is_opponent_hand), unsafe_allow_html=True)
 
 
@@ -212,11 +225,11 @@ st.title("达芬奇密码 - Web UI 对战")
 if 'game_env' not in st.session_state:
     try:
         st.session_state.game_env = DaVinciCodeGameEnvironment()
-        st.session_state.game_state = st.session_state.game_env.reset() # 初始化游戏并获取初始状态
-        st.session_state.selected_guess_index = None # 当前选择要猜测的牌的索引
-        st.session_state.guess_color = 'B' # 猜测的颜色
-        st.session_state.guess_value = '0' # 猜测的数值/百搭
-        st.session_state.message = "游戏初始化成功！" # 用于显示游戏消息
+        st.session_state.game_state = st.session_state.game_env.reset()
+        st.session_state.selected_guess_index = None
+        st.session_state.guess_color = 'B'
+        st.session_state.guess_value = '0'
+        st.session_state.message = "游戏初始化成功！"
     except Exception as e:
         st.error(f"初始化游戏环境时出错: {e}")
         st.stop()
@@ -232,10 +245,9 @@ state = st.session_state.game_state
 
 # 显示游戏消息
 if 'message' in st.session_state and st.session_state.message:
-    # 使用 st.empty() 来显示临时消息，并在下次 rerun 时自动清除
     msg_placeholder = st.empty()
     msg_placeholder.info(st.session_state.message)
-    st.session_state.message = "" # 清除消息状态
+    st.session_state.message = ""
 
 # 检查游戏状态是否有效
 if not isinstance(state, dict) or 'game_over' not in state:
@@ -245,7 +257,7 @@ if not isinstance(state, dict) or 'game_over' not in state:
          st.session_state.game_state = st.session_state.game_env.reset()
          st.session_state.selected_guess_index = None
          st.session_state.message = "游戏已重置。"
-         state = st.session_state.game_state # 获取新状态
+         state = st.session_state.game_state
          st.rerun()
      except Exception as e:
          st.error(f"重置游戏时出错: {e}")
@@ -270,9 +282,136 @@ if state.get('game_over', False):
     else:
         st.warning("无法显示最终手牌状态。")
 
-    st.write("--- 游戏历史记录 ---")
+    # --- 新增：游戏结束时记录日志 ---
+    try:
+        log_filename = "davinci_game_log.txt"
+        # 尝试获取完整的最终状态信息
+        final_state_info = {}
+        if hasattr(env, 'get_state_info'):
+             final_state_info = env.get_state_info()
+        else: # 如果没有 get_state_info 方法，就用当前 state 和 env 属性构建
+             final_state_info = {
+                 'winner': winner,
+                 'hands': env.hands if hasattr(env, 'hands') else 'N/A',
+                 'revealed': env.revealed if hasattr(env, 'revealed') else 'N/A',
+                 'history': env.history if hasattr(env, 'history') else 'N/A'
+             }
+
+
+        with open(log_filename, "a", encoding="utf-8") as f:
+            f.write("="*50 + "\n")
+            f.write(f"游戏结束时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"获胜者: 玩家 {final_state_info.get('winner', 'N/A')}\n")
+
+            # 记录最终手牌和状态
+            if 'hands' in final_state_info and 'revealed' in final_state_info and \
+               isinstance(final_state_info['hands'], list) and isinstance(final_state_info['revealed'], list) and \
+               len(final_state_info['hands']) == len(final_state_info['revealed']):
+                 for p_id in range(len(final_state_info['hands'])):
+                      # 安全地访问手牌和揭示列表
+                      if p_id < len(final_state_info['hands']) and p_id < len(final_state_info['revealed']):
+                          hand_list = final_state_info['hands'][p_id]
+                          revealed_list = final_state_info['revealed'][p_id]
+                          if isinstance(hand_list, list) and isinstance(revealed_list, list) and len(hand_list) == len(revealed_list):
+                              hand_str = ', '.join(hand_list)
+                              revealed_str_list = []
+                              for card_idx, rev_status in enumerate(revealed_list):
+                                   card_val = hand_list[card_idx]
+                                   revealed_str_list.append(f"{card_val}({'已揭示' if rev_status else '隐藏'})")
+                              revealed_str = ', '.join(revealed_str_list)
+
+                              f.write(f"\n玩家 {p_id} 最终手牌: {hand_str}\n")
+                              f.write(f"玩家 {p_id} 最终状态: {revealed_str}\n")
+                          else:
+                               f.write(f"\n玩家 {p_id} 最终手牌/状态数据格式错误。\n")
+                      else:
+                           f.write(f"\n无法获取玩家 {p_id} 的最终手牌/状态数据。\n")
+            else:
+                 f.write("\n无法记录最终手牌和状态信息。\n")
+
+
+            # 记录完整原始历史记录到文件
+            if 'history' in final_state_info and isinstance(final_state_info['history'], list):
+                 f.write("\n游戏完整历史记录 (原始):\n")
+                 for entry in final_state_info['history']:
+                      f.write(f"- {entry}\n")
+            else:
+                 f.write("\n无法记录游戏历史。\n")
+
+            f.write("="*50 + "\n\n")
+        # 可选：通知用户日志已保存
+        # st.sidebar.success(f"游戏记录已追加到 {log_filename}")
+
+    except Exception as e:
+        st.error(f"写入游戏日志时出错: {e}")
+    # --- 结束日志记录 ---
+
+
+    st.write("--- 游戏历史记录 (UI 显示) ---") # UI中仍然显示过滤后的历史
     if hasattr(env, 'get_history'):
-        st.json(env.get_history())
+        history = env.get_history()
+        filtered_history = []
+        opponent_id_for_history = 1
+        human_player_id_for_history = 0
+
+        for entry in history:
+            processed_entry = entry
+            player_name = ""
+            is_opponent_entry = False
+            is_human_entry = False
+
+            opponent_player_str_en = f"Player {opponent_id_for_history}"
+            opponent_player_str_zh = f"玩家 {opponent_id_for_history}"
+            human_player_str_en = f"Player {human_player_id_for_history}"
+            human_player_str_zh = f"玩家 {human_player_id_for_history}"
+
+            if opponent_player_str_en in entry or opponent_player_str_zh in entry:
+                player_name = f"对手 (玩家 {opponent_id_for_history})"
+                is_opponent_entry = True
+            elif human_player_str_en in entry or human_player_str_zh in entry:
+                player_name = f"你 (玩家 {human_player_id_for_history})"
+                is_human_entry = True
+
+            if ("draws" in entry or "抽到" in entry) and is_opponent_entry:
+                 processed_entry = f"{player_name} 抽了一张牌。"
+            elif ("placed" in entry or "放置了" in entry) and ("at position" in entry or "在位置" in entry):
+                 position = "?"
+                 reveal_text = ""
+                 parts = entry.replace('(',' ').replace(')',' ').split(" ")
+                 try:
+                     pos_keywords = ["position", "位置"]
+                     pos_index = -1
+                     for kw in pos_keywords:
+                         indices = [i for i, part in enumerate(parts) if kw in part]
+                         if indices:
+                             potential_pos_idx = indices[-1] + 1
+                             if potential_pos_idx < len(parts) and parts[potential_pos_idx].split('-')[0].isdigit():
+                                  pos_index = potential_pos_idx
+                                  break
+                     if pos_index != -1:
+                          position = parts[pos_index].split('-')[0]
+
+                     if "revealed" in entry or "已揭示" in entry:
+                         reveal_text = "(已揭示)"
+                     elif "hidden" in entry or "隐藏" in entry:
+                         reveal_text = "(隐藏)"
+
+                     if player_name:
+                          processed_entry = f"{player_name} 在位置 {position} 放置了一张牌 {reveal_text}。"
+                     else:
+                          processed_entry = f"有玩家在位置 {position} 放置了一张牌 {reveal_text}。"
+
+                 except Exception:
+                      if player_name:
+                          processed_entry = f"{player_name} 放置了一张牌。"
+                      else:
+                          processed_entry = "有玩家放置了一张牌。"
+
+            filtered_history.append(processed_entry)
+
+        st.json(filtered_history) # 显示过滤后的历史
+        st.caption("注：抽牌及放置的具体牌面信息已隐藏。")
+
     if st.button("开始新游戏"):
         try:
             st.session_state.game_env = DaVinciCodeGameEnvironment()
@@ -285,108 +424,121 @@ if state.get('game_over', False):
     st.stop()
 
 # --- 确定玩家 ID 和回合 ---
-human_player_id = 0 # 固定人类玩家为 0
+human_player_id = 0
 opponent_player_id = 1
 is_human_turn = (state.get('current_player') == human_player_id)
 
-# --- 对手回合逻辑 ---
+# --- 对手回合逻辑 (无 sleep) ---
 if not is_human_turn and not state.get('game_over', False):
-    # 使用 placeholder 显示思考信息，避免 rerun 时残留
     thinking_placeholder = st.empty()
-    thinking_placeholder.info(f"对手 (玩家 {opponent_player_id}) 正在思考...")
-    time.sleep(1.5) # 暂停 1.5 秒模拟思考
+    thinking_placeholder.info(f"对手 (玩家 {opponent_player_id}) 正在操作...")
 
     opponent_action = None
     must_place = False
-    correct_guess = False # 初始化猜测结果标志
+    correct_guess = False
 
-    # 获取人类玩家的隐藏牌信息 (直接从 env 获取)
-    human_hand = env.hands[human_player_id]
-    human_revealed = env.revealed[human_player_id]
-    hidden_indices = [i for i, r in enumerate(human_revealed) if not r]
-
-    drawn_card_opponent = state.get('drawn_card') # 对手抽到的牌
-
-    # 检查对手是否有牌可操作
-    if drawn_card_opponent is None:
-         st.warning("对手回合但没有抽到牌（可能牌堆已空或状态错误）。")
-         # 这里可能需要更复杂的逻辑，例如检查游戏是否应该结束
-         # 为简单起见，我们假设这种情况不应发生或会自动处理
-    elif not hidden_indices:
-        must_place = True
-        opponent_action = ('place',)
-        st.session_state.message = f"对手没有可猜的牌，选择放置 {drawn_card_opponent}。"
+    if not hasattr(env, 'hands') or len(env.hands) <= human_player_id:
+         st.error("无法获取人类玩家手牌信息，对手回合跳过。")
     else:
-        # 决定猜测动作
-        target_index = random.choice(hidden_indices)
-        actual_card = human_hand[target_index]
+        human_hand = env.hands[human_player_id]
+        human_revealed = env.revealed[human_player_id]
+        hidden_indices = [i for i, r in enumerate(human_revealed) if not r]
+        drawn_card_opponent = state.get('drawn_card')
 
-        if random.random() < 1/3: # 1/3 概率猜对
-            opponent_action = ('guess', target_index, actual_card)
-            st.session_state.message = f"对手猜测你的位置 {target_index} 是 {actual_card}..."
-            correct_guess = True
-        else: # 2/3 概率猜错
-            possible_cards = [f"B{i}" for i in range(12)] + [f"W{i}" for i in range(12)] + ["B-", "W-"]
-            wrong_guess_card = actual_card
-            # 确保生成的错误猜测与实际卡牌不同
-            while wrong_guess_card == actual_card:
-                 wrong_guess_card = random.choice(possible_cards)
-            opponent_action = ('guess', target_index, wrong_guess_card)
-            st.session_state.message = f"对手猜测你的位置 {target_index} 是 {wrong_guess_card}..."
-            correct_guess = False
+        if drawn_card_opponent is None:
+             st.warning("对手回合但没有抽到牌（可能牌堆已空或状态错误）。")
+             # 如果没有抽到牌，对手只能猜测（如果可能）
+             if hidden_indices:
+                  target_index = random.choice(hidden_indices)
+                  actual_card = human_hand[target_index]
+                  if random.random() < 1/3:
+                      opponent_action = ('guess', target_index, actual_card)
+                      st.session_state.message = f"对手猜测你的位置 {target_index} 是 {actual_card}..."
+                      correct_guess = True
+                  else:
+                      possible_cards = [f"B{i}" for i in range(12)] + [f"W{i}" for i in range(12)] + ["B-", "W-"]
+                      wrong_guess_card = actual_card
+                      while wrong_guess_card == actual_card:
+                           wrong_guess_card = random.choice(possible_cards)
+                      opponent_action = ('guess', target_index, wrong_guess_card)
+                      st.session_state.message = f"对手猜测你的位置 {target_index} 是 {wrong_guess_card}..."
+                      correct_guess = False
+             else:
+                  # 没牌抽，也没牌猜，回合无法进行
+                  st.error("对手回合无法进行任何操作（无抽牌且无牌可猜）。")
+                  # 这里可能应该结束游戏或跳过回合，取决于规则
+                  opponent_action = None # 确保没有动作执行
 
-    # --- 执行对手的动作 ---
-    try:
-        if opponent_action:
-            # 执行第一步 (猜测或放置)
-            next_state, reward, done, info = env.step(opponent_action)
-            st.session_state.game_state = next_state # 更新状态
-
-            # 根据猜测结果更新消息
-            if opponent_action[0] == 'guess':
-                 if correct_guess:
-                     st.session_state.message += " 猜对了！"
-                     # 如果猜对了，并且游戏没有结束，则立即执行放置动作
-                     if not done:
-                         time.sleep(1.0) # 短暂暂停
-                         thinking_placeholder.info("对手猜对后选择放置卡牌...") # 更新提示信息
-                         time.sleep(1.0)
-                         place_action = ('place',)
-                         # 检查放置动作是否合法 (理论上应该是合法的)
-                         if place_action in next_state.get('legal_actions', []):
-                              next_state_after_place, reward_place, done_after_place, info_place = env.step(place_action)
-                              st.session_state.game_state = next_state_after_place # 再次更新状态
-                              st.session_state.message += " 对手放置了卡牌。"
-                              done = done_after_place # 更新游戏结束状态
-                         else:
-                              st.warning("对手无法在猜对后放置卡牌（意外情况）。对手回合结束。")
-                              # 即使不能放置，回合也应该结束，因为不允许第二次猜测
-                 else: # 猜错了
-                     st.session_state.message += " 猜错了。"
-                     # env.step 内部已经处理了放置揭示牌并切换回合
-
-            elif opponent_action[0] == 'place':
-                 st.session_state.message += " 对手放置了卡牌。"
-                 # env.step 内部已经处理了放置并切换回合
-
+        elif not hidden_indices:
+            must_place = True
+            opponent_action = ('place',)
+            st.session_state.message = f"对手没有可猜的牌，选择放置。"
         else:
-             # 如果因为某种原因没有生成动作 (例如抽牌为空但游戏未结束)
-             st.error("对手未能决定动作。跳过回合。")
-             # 可能需要手动切换玩家或处理结束条件
-             # 为简单起见，这里仅记录错误，依赖下一次 rerun 修正状态
+            target_index = random.choice(hidden_indices)
+            actual_card = human_hand[target_index]
+            if random.random() < 1/3:
+                opponent_action = ('guess', target_index, actual_card)
+                st.session_state.message = f"对手猜测你的位置 {target_index} 是 {actual_card}..."
+                correct_guess = True
+            else:
+                possible_cards = [f"B{i}" for i in range(12)] + [f"W{i}" for i in range(12)] + ["B-", "W-"]
+                wrong_guess_card = actual_card
+                while wrong_guess_card == actual_card:
+                     wrong_guess_card = random.choice(possible_cards)
+                opponent_action = ('guess', target_index, wrong_guess_card)
+                st.session_state.message = f"对手猜测你的位置 {target_index} 是 {wrong_guess_card}..."
+                correct_guess = False
 
-        st.session_state.selected_guess_index = None # 清除可能残留的人类选择
-        thinking_placeholder.empty() # 清除“正在思考”的消息
-        time.sleep(0.5) # 短暂暂停显示结果
-        st.rerun() # 重新运行以刷新整个界面，进入人类玩家回合或结束游戏
+        try:
+            if opponent_action:
+                next_state, reward, done, info = env.step(opponent_action)
+                st.session_state.game_state = next_state
 
-    except Exception as e:
-        thinking_placeholder.empty() # 清除消息
-        st.error(f"执行对手 ({opponent_player_id}) 动作时出错: {e}")
-        # 记录错误，可能需要手动刷新或重置游戏
+                if opponent_action[0] == 'guess':
+                     if correct_guess:
+                         st.session_state.message += " 猜对了！"
+                         if not done:
+                             thinking_placeholder.info("对手猜对后选择放置卡牌...")
+                             place_action = ('place',)
+                             # 检查放置是否仍然是合法动作（重要，因为状态已更新）
+                             if place_action in next_state.get('legal_actions', []):
+                                  next_state_after_place, reward_place, done_after_place, info_place = env.step(place_action)
+                                  st.session_state.game_state = next_state_after_place
+                                  st.session_state.message += " 对手放置了卡牌。"
+                                  done = done_after_place
+                             else:
+                                  # 如果猜对后不能放置（例如没有抽到牌），则回合结束
+                                  st.warning("对手猜对但无法放置卡牌（可能因为牌堆已空）。对手回合结束。")
+                                  st.session_state.message += " 但无法放置卡牌。"
+                     else:
+                         st.session_state.message += " 猜错了。"
 
-# --- 游戏界面布局 (在对手回合之后渲染) ---
-st.markdown("---") # 分隔线
+                elif opponent_action[0] == 'place':
+                     # 初始消息已包含放置意图
+                     pass
+
+            else:
+                 # 如果 opponent_action 为 None (例如没牌抽也没牌猜)
+                 st.error("对手未能决定动作。跳过回合。")
+                 # 手动切换玩家？或者依赖环境的错误处理？
+                 # 为安全起见，如果环境没自动切换，我们手动切换（如果游戏没结束）
+                 if not state.get('game_over'):
+                      env.current_player = human_player_id # 强制切换回人类
+                      st.session_state.game_state = env._get_state() # 更新状态
+                      st.session_state.message = "对手无法行动，回合跳过。"
+
+
+            st.session_state.selected_guess_index = None
+            thinking_placeholder.empty()
+            st.rerun()
+
+        except Exception as e:
+            thinking_placeholder.empty()
+            st.error(f"执行对手 ({opponent_player_id}) 动作时出错: {e}")
+
+
+# --- 游戏界面布局 ---
+st.markdown("---")
 
 st.header(f"对手 (玩家 {opponent_player_id}) 的手牌")
 if hasattr(env, 'hands') and hasattr(env, 'revealed') and \
@@ -397,7 +549,7 @@ else:
     st.write("等待对手或状态初始化...")
 
 
-st.markdown("---") # 分隔线
+st.markdown("---")
 
 st.header(f"你的手牌 (玩家 {human_player_id})")
 if hasattr(env, 'hands') and hasattr(env, 'revealed') and \
@@ -407,56 +559,139 @@ if hasattr(env, 'hands') and hasattr(env, 'revealed') and \
 else:
      st.write("等待加入或状态初始化...")
 
-st.markdown("---") # 分隔线
+st.markdown("---")
 
 # --- 游戏信息和控制 ---
-col_info, col_actions = st.columns([2, 1]) # 信息区和操作区分开
+col_info, col_actions = st.columns([2, 1])
 
 with col_info:
     st.subheader("游戏信息")
     st.write(f"牌堆剩余: {state.get('deck_size', 'N/A')} 张")
     st.write(f"当前回合: 玩家 {state.get('current_player', 'N/A')}")
-    # 仅在轮到人类玩家时显示抽到的牌和提示
-    if is_human_turn and state.get('drawn_card'):
-        st.write(f"你抽到的牌: **{state['drawn_card']}**")
-        if state.get('can_guess_again'):
-            st.info("你上一次猜对了！你可以再次猜测，或者放置你抽到的牌（这张牌将保持隐藏）。")
-        else:
-            st.info("轮到你了。请猜测对手的牌，或者放置你抽到的牌（这张牌将被揭示）。")
-    elif not is_human_turn and not state.get('game_over'): # 如果是对手回合且游戏未结束
-        st.write("等待对手操作...") # 这个消息可能被上面的 "正在思考" 覆盖
 
-    # 显示最近历史记录
+    # 显示抽到的牌
+    drawn_card = state.get('drawn_card')
+    current_player_for_drawn_card = state.get('current_player')
+    if drawn_card is not None and current_player_for_drawn_card is not None:
+        drawn_card_owner = "你" if current_player_for_drawn_card == human_player_id else f"对手 (玩家 {opponent_player_id})"
+        st.markdown(f"""
+        <div class="drawn-card-display">
+            <span style="font-size: 0.9em; margin-bottom: 5px;">{drawn_card_owner} 抽到的牌:</span>
+            {format_card_html(drawn_card, True, False, is_drawn_card_display=True)}
+        </div>
+        """, unsafe_allow_html=True)
+    # --- 新增：如果牌堆为空，明确提示 ---
+    elif state.get('deck_size', -1) == 0 and not state.get('game_over'):
+         st.warning("牌堆已空！本回合不再抽牌。")
+    # --- 结束新增 ---
+
+
+    # 操作提示
+    if is_human_turn: # 轮到人类时
+        if state.get('drawn_card'): # 如果有抽到牌
+            if state.get('can_guess_again'):
+                st.info("你上一次猜对了！你可以再次猜测，或者放置你抽到的牌（这张牌将保持隐藏）。")
+            else:
+                st.info("轮到你了。请猜测对手的牌，或者放置你抽到的牌（这张牌将被揭示）。")
+        elif state.get('deck_size', -1) == 0: # 如果没抽到牌且牌堆为空
+             st.info("轮到你了，牌堆已空，请直接猜测对手的牌。")
+        # 其他情况（例如游戏刚开始，还没轮到行动）不显示提示
+
+    elif not is_human_turn and not state.get('game_over'):
+        st.write("等待对手操作...")
+
+    # 显示最近历史记录 (过滤后)
     st.write("--- 最近历史 ---")
     history = env.get_history() if hasattr(env, 'get_history') else []
-    start_index = max(0, len(history) - 5) # 显示最近 5 条
-    for entry in history[start_index:]:
-        st.text(f"- {entry}")
+    filtered_history = []
+    opponent_id_for_history = 1
+    human_player_id_for_history = 0
 
+    for entry in history:
+        processed_entry = entry
+        player_name = ""
+        is_opponent_entry = False
+        is_human_entry = False
+
+        opponent_player_str_en = f"Player {opponent_id_for_history}"
+        opponent_player_str_zh = f"玩家 {opponent_id_for_history}"
+        human_player_str_en = f"Player {human_player_id_for_history}"
+        human_player_str_zh = f"玩家 {human_player_id_for_history}"
+
+        if opponent_player_str_en in entry or opponent_player_str_zh in entry:
+            player_name = f"对手 (玩家 {opponent_id_for_history})"
+            is_opponent_entry = True
+        elif human_player_str_en in entry or human_player_str_zh in entry:
+            player_name = f"你 (玩家 {human_player_id_for_history})"
+            is_human_entry = True
+
+        if ("draws" in entry or "抽到" in entry) and is_opponent_entry:
+             processed_entry = f"{player_name} 抽了一张牌。"
+        elif ("placed" in entry or "放置了" in entry) and ("at position" in entry or "在位置" in entry):
+             position = "?"
+             reveal_text = ""
+             parts = entry.replace('(',' ').replace(')',' ').split(" ")
+             try:
+                 pos_keywords = ["position", "位置"]
+                 pos_index = -1
+                 for kw in pos_keywords:
+                     indices = [i for i, part in enumerate(parts) if kw in part]
+                     if indices:
+                         potential_pos_idx = indices[-1] + 1
+                         if potential_pos_idx < len(parts) and parts[potential_pos_idx].split('-')[0].isdigit():
+                              pos_index = potential_pos_idx
+                              break
+                 if pos_index != -1:
+                      position = parts[pos_index].split('-')[0]
+
+                 if "revealed" in entry or "已揭示" in entry:
+                     reveal_text = "(已揭示)"
+                 elif "hidden" in entry or "隐藏" in entry:
+                     reveal_text = "(隐藏)"
+
+                 if player_name:
+                      processed_entry = f"{player_name} 在位置 {position} 放置了一张牌 {reveal_text}。"
+                 else:
+                      processed_entry = f"有玩家在位置 {position} 放置了一张牌 {reveal_text}。"
+
+             except Exception:
+                  if player_name:
+                      processed_entry = f"{player_name} 放置了一张牌。"
+                  else:
+                      processed_entry = "有玩家放置了一张牌。"
+
+        filtered_history.append(processed_entry)
+
+    start_index = max(0, len(filtered_history) - 5)
+    for entry in filtered_history[start_index:]:
+        st.text(f"- {entry}")
+    st.caption("注：抽牌及放置的具体牌面信息已隐藏。")
 
 with col_actions:
     st.subheader("你的操作")
 
-    # 仅在轮到人类玩家时显示操作按钮
-    if is_human_turn and state.get('drawn_card'):
-        legal_actions = state.get('legal_actions', [])
-        can_place = ('place',) in legal_actions
+    # 修改：当牌堆为空时，人类玩家不能放置，只能猜测
+    can_perform_action = is_human_turn and not state.get('game_over')
+    can_place_action = can_perform_action and state.get('drawn_card') is not None
+    can_guess_action = can_perform_action # 只要轮到你且游戏没结束就可以尝试猜测
 
-        # 放置按钮
-        if st.button("放置抽到的牌", key="place_card", disabled=not can_place, help="将抽到的牌放入你的手牌中"):
-            if can_place:
+    if can_perform_action:
+        legal_actions = state.get('legal_actions', [])
+        # 放置按钮 (仅在有抽到牌时可用)
+        place_button_disabled = not (('place',) in legal_actions and can_place_action)
+        if st.button("放置抽到的牌", key="place_card", disabled=place_button_disabled, help="将抽到的牌放入你的手牌中"):
+            if not place_button_disabled:
                 action = ('place',)
                 try:
                     next_state, reward, done, info = env.step(action)
                     st.session_state.game_state = next_state
-                    st.session_state.selected_guess_index = None # 清除猜测状态
+                    st.session_state.selected_guess_index = None
                     st.session_state.message = f"你放置了牌。奖励: {reward:.1f}"
-                    st.rerun() # 重新运行以更新 UI
+                    st.rerun()
                 except Exception as e:
                     st.error(f"执行放置动作时出错: {e}")
             else:
-                st.warning("当前无法执行放置动作。")
-
+                st.warning("当前无法执行放置动作（可能未抽牌或动作不合法）。")
 
         # 猜测输入框 (仅当点击了对手的牌时显示)
         if 'selected_guess_index' in st.session_state and st.session_state.selected_guess_index is not None:
@@ -478,33 +713,37 @@ with col_actions:
 
                      guessed_card = f"{guess_color}{guess_value}"
 
-                     if st.button(f"确定猜测 {guessed_card}", key="submit_guess"):
-                         action = ('guess', idx_to_guess, guessed_card)
-                         is_legal = False
-                         current_legal_actions = state.get('legal_actions', [])
-                         for legal_act in current_legal_actions:
-                             if legal_act == action:
-                                 is_legal = True
-                                 break
+                     # 提交猜测按钮 (检查是否可以猜测)
+                     submit_guess_disabled = not can_guess_action
+                     if st.button(f"确定猜测 {guessed_card}", key="submit_guess", disabled=submit_guess_disabled):
+                         if not submit_guess_disabled:
+                             action = ('guess', idx_to_guess, guessed_card)
+                             is_legal = False
+                             current_legal_actions = state.get('legal_actions', [])
+                             # 检查猜测动作是否在合法列表中 (注意：列表可能非常大)
+                             # 简化检查：只要能猜测，就认为动作格式本身是合法的，让环境处理具体牌值
+                             # if action in current_legal_actions: is_legal = True
+                             # 假设只要能猜测，动作就是合法的，让环境判断对错
+                             is_legal = True # 简化处理，依赖环境判断
 
-                         if is_legal:
-                             try:
-                                 next_state, reward, done, info = env.step(action)
-                                 st.session_state.game_state = next_state
-                                 st.session_state.selected_guess_index = None
-                                 if reward > 0.05:
-                                     st.session_state.message = f"猜对了！奖励: {reward:.1f}"
-                                 else:
-                                     st.session_state.message = f"猜错了。奖励: {reward:.1f}"
-                                 if 'guess_color_widget_val' in st.session_state: del st.session_state.guess_color_widget_val
-                                 if 'guess_value_widget_val' in st.session_state: del st.session_state.guess_value_widget_val
-                                 st.rerun()
-                             except Exception as e:
-                                 st.error(f"执行猜测动作时出错: {e}")
-                                 st.session_state.selected_guess_index = None
-                                 st.rerun()
-                         else:
-                             st.warning(f"猜测动作 {action} 当前不合法。请检查可用的猜测。")
+                             if is_legal:
+                                 try:
+                                     next_state, reward, done, info = env.step(action)
+                                     st.session_state.game_state = next_state
+                                     st.session_state.selected_guess_index = None
+                                     if reward > 0.05:
+                                         st.session_state.message = f"猜对了！奖励: {reward:.1f}"
+                                     else:
+                                         st.session_state.message = f"猜错了。奖励: {reward:.1f}"
+                                     if 'guess_color_widget_val' in st.session_state: del st.session_state.guess_color_widget_val
+                                     if 'guess_value_widget_val' in st.session_state: del st.session_state.guess_value_widget_val
+                                     st.rerun()
+                                 except Exception as e:
+                                     st.error(f"执行猜测动作时出错: {e}")
+                                     st.session_state.selected_guess_index = None
+                                     st.rerun()
+                             # else: # 因为简化了合法性检查，这部分不再需要
+                             #    st.warning(f"猜测动作 {action} 当前不合法。请检查可用的猜测。")
 
                      if st.button("取消猜测", key="cancel_guess"):
                          st.session_state.selected_guess_index = None
@@ -518,11 +757,10 @@ with col_actions:
                  st.rerun()
 
     elif not is_human_turn:
-        # 在对手回合，操作区显示等待信息
         st.write("等待对手操作...")
-    else:
-         # 游戏刚开始或出现错误，没有抽到牌
-         st.write("等待游戏开始或处理中...")
+    else: # 轮到人类，但不能行动 (例如游戏结束或状态错误)
+         st.write("现在无法操作。")
+
 
 # --- 页脚或调试信息 (可选) ---
 # st.markdown("---")
@@ -530,3 +768,4 @@ with col_actions:
 #     st.json(state)
 # with st.expander("调试信息 (完整环境状态)"):
 #     st.json(env.get_state_info())
+
