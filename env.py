@@ -592,6 +592,14 @@ class DaVinciCodeGameEnvironment:
             'winner': self.winner,
             'history': copy.deepcopy(self.history)
         }
+    def get_all_possible_cards(self):
+        """
+        返回所有可能的卡牌列表。
+
+        Returns:
+            list: 所有可能的卡牌字符串列表。
+        """
+        return [f"B{i}" for i in range(12)] + [f"W{i}" for i in range(12)] + ["B-", "W-"]
 
 # --- 示例用法 ---
 if __name__ == "__main__":
