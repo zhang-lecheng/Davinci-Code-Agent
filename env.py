@@ -8,6 +8,14 @@ import random
 import copy
 import os
 
+#问题汇总
+#1, 不能决定拿的是黑牌还是白牌（开始，抽牌） _draw_card_from_deck
+#2, 不能自定义joker的位置，并不是抽到joker时就可以完全确定他的值，需要通过后续抽牌修改
+#3, 没有写摸玩牌后的逻辑，牌库空后应该不摸牌直接猜对手的牌
+#4, 只有2人对战 主要对opponent_id进行修改
+#5，是#3问题的延续，猜错牌并且没有摸牌时，应该选择公布一张牌
+
+
 class DaVinciCodeGameEnvironment:
     """
     表示达芬奇密码的游戏环境。
@@ -53,9 +61,9 @@ class DaVinciCodeGameEnvironment:
 
     def _initialize_game(self):
         """设置游戏变量的初始状态。"""
-        self.black_joker = random.uniform(-0.5, 12)
-        self.white_joker = random.uniform(-0.5, 12)
         # 初始化牌堆：黑色卡牌 (0-11)，白色卡牌 (0-11)，以及百搭牌 (-)
+        self.black_joker = random.uniform(-0.5, 12) # 设定百搭牌的值，范围在 -0.5 到 12 之间，以便后续排序
+        self.white_joker = random.uniform(-0.5, 12) # 百搭牌的位置不应该是随机生成的，后面需要修改
         self.deck = [f"B{i}" for i in range(12)] + [f"W{i}" for i in range(12)] + ["B-", "W-"]
         random.shuffle(self.deck)
 
@@ -112,12 +120,11 @@ class DaVinciCodeGameEnvironment:
         value = card[1:]
 
         if value == '-':
-            # 百搭牌最小：B- < W-
+            # 百搭牌通过随机出来的值来表示
             if color == 'B':
                 return self.black_joker
             elif color == 'W':
                 return self.white_joker
-            #return -1.0 if color == 'B' else -0.5
         try:
             num = int(value)
             # 数字优先，颜色次之（黑色 < 白色）
@@ -128,7 +135,8 @@ class DaVinciCodeGameEnvironment:
 
     def _deal_initial_cards(self):
         """给每个玩家发 4 张牌并排序。"""
-        num_initial_cards = 4
+        # 每个玩家的初始手牌数量，2人游戏为4，3，4人游戏为3
+        num_initial_cards = 4 if self.num_players == 2 else 3
         if len(self.deck) < self.num_players * num_initial_cards:
              raise RuntimeError("牌堆中的牌不足以分发初始手牌。")
 
@@ -176,13 +184,14 @@ class DaVinciCodeGameEnvironment:
         card_val = self.card_value(card)
         while insert_pos < len(hand) and self.card_value(hand[insert_pos]) < card_val:
             insert_pos += 1
-
-        # 处理相同数字但颜色不同的卡牌（例如，当 W5 存在时插入 B5）
-        while insert_pos < len(hand) and self.card_value(hand[insert_pos]) == card_val:
-             # 确保相同数字时 B 在 W 之前
-             if card[0] == 'B' and hand[insert_pos][0] == 'W':
-                 break # 在白色之前插入黑色
-             insert_pos += 1
+        
+        # 由于card_value 已经处理颜色的问题，这里不再需要额外的逻辑
+        # # 处理相同数字但颜色不同的卡牌（例如，当 W5 存在时插入 B5）
+        # while insert_pos < len(hand) and self.card_value(hand[insert_pos]) == card_val:
+        #      # 确保相同数字时 B 在 W 之前
+        #      if card[0] == 'B' and hand[insert_pos][0] == 'W':
+        #          break # 在白色之前插入黑色
+        #      insert_pos += 1
 
 
         # 插入卡牌及其揭示状态
@@ -216,7 +225,7 @@ class DaVinciCodeGameEnvironment:
         if self.game_over:
              # 返回终止状态表示
              player_id = self.current_player # 或者可能无关紧要
-             opponent_id = (player_id + 1) % self.num_players
+             opponent_id = (player_id + 1) % self.num_players 
              return {
                 'current_player': player_id,
                 'hand': copy.deepcopy(self.hands[player_id]),
@@ -272,14 +281,19 @@ class DaVinciCodeGameEnvironment:
                   示例：[('place',), ('guess', 0, 'B5'), ('guess', 1, 'W-'), ...]
                   如果游戏结束或未抽牌，则返回空列表。
         """
-        if self.game_over or self._drawn_card is None:
-            # 如果玩家必须行动但没有抽到的牌（正常流程中不应发生），
+        if self.game_over:
             # 强制结束？或返回空列表。
             return []
-
+        #当webui将牌库清空情况下的逻辑写好后注释这段代码
+        if self._drawn_card is None:
+            # 如果没有抽到牌，返回空列表(没写逻辑，暂时退出)
+            return []
+        
         actions = []
         # 当持有牌时（_drawn_card 不为 None），'place' 始终是一个选项
-        actions.append(('place',))
+        if self._drawn_card is not None:
+            actions.append(('place',))
+        
 
         # 如果对手有隐藏的牌，则可以进行猜测
         opponent_id = (self.current_player + 1) % self.num_players
