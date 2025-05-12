@@ -14,9 +14,12 @@ class ActorCritic(nn.Module):
         self.actor_fc = nn.Linear(256, action_size)
         self.critic_fc = nn.Linear(256, 1)
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         x = torch.relu(self.shared_fc(x))
-        action_probs = torch.softmax(self.actor_fc(x), dim=-1)
+        action_logits = self.actor_fc(x)
+        if mask is not None:
+            action_logits = action_logits + (mask * -1e9)  # Apply mask
+        action_probs = torch.softmax(action_logits, dim=-1)
         state_value = self.critic_fc(x)
         return action_probs, state_value
 
@@ -34,9 +37,10 @@ class PPOAgent:
         self.optimizer = optim.Adam(self.policy.parameters(), lr=lr)
         self.mse_loss = nn.MSELoss()
 
-    def select_action(self, state, memory):
+    def select_action(self, state, memory, action_mask):
         state = torch.FloatTensor(state).unsqueeze(0)
-        action_probs, _ = self.policy_old(state)
+        action_mask_tensor = torch.FloatTensor(action_mask).unsqueeze(0)
+        action_probs, _ = self.policy_old(state, mask=action_mask_tensor)
         dist = torch.distributions.Categorical(action_probs)
         action = dist.sample()
         memory.states.append(state)
@@ -148,10 +152,12 @@ if __name__ == "__main__":
         total_reward = 0
 
         while not done:
-            action = agent.select_action(state_vector, memory)
             legal_actions = env._get_legal_actions()
-            if action >= len(legal_actions):
-                action = random.choice(range(len(legal_actions)))  # Prevent illegal actions
+            action_mask = np.zeros(agent.action_size, dtype=np.float32)
+            action_mask[:len(legal_actions)] = 0  # Valid actions
+            action_mask[len(legal_actions):] = 1  # Invalid actions
+
+            action = agent.select_action(state_vector, memory, action_mask)
             chosen_action = legal_actions[action]
 
             next_state, reward, done, _ = env.step(chosen_action)

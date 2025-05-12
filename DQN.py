@@ -28,16 +28,16 @@ class DQN(nn.Module):
     def forward(self, x, mask=None):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
-        if mask is not None:
-            x = x * mask  # Apply the mask
         x = self.fc3(x)
+        if mask is not None:
+            x = x + (mask * -1e9)  # Apply mask by adding a large negative value to invalid actions
         return x
 
 # 定义DQN智能体
 class DQNAgent:
-    def __init__(self, state_size, action_size):
+    def __init__(self, state_size, action_size, max_action_size=150):
         self.state_size = state_size
-        self.action_size = action_size
+        self.action_size = max_action_size  # Use a fixed maximum action size
         self.memory = deque(maxlen=5000)
         self.gamma = 0.95  # 折扣因子
         self.epsilon = 1.0  # 探索率
@@ -46,12 +46,15 @@ class DQNAgent:
         self.learning_rate = 0.001
         self.batch_size = 128
 
-        self.model = DQN(state_size, action_size)
-        self.target_model = DQN(state_size, action_size)
+        self.model = DQN(state_size, max_action_size)
+        self.target_model = DQN(state_size, max_action_size)
         self.update_target_model()
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
         self.criterion = nn.MSELoss()
+        
+        # Store the current action size (can be different from max_action_size)
+        self.current_action_size = action_size
 
     def update_target_model(self):
         self.target_model.load_state_dict(self.model.state_dict())
@@ -59,11 +62,23 @@ class DQNAgent:
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
 
-    def act(self, state):
+    def act(self, state, action_mask=None):
         if np.random.rand() <= self.epsilon:
-            return random.randrange(self.action_size)
+            if action_mask is not None:
+                valid_actions = np.where(action_mask == 0)[0]
+                return random.choice(valid_actions) if len(valid_actions) > 0 else 0
+            else:
+                return random.randrange(self.current_action_size)
+        
         state = torch.FloatTensor(state).unsqueeze(0)
-        act_values = self.model(state)
+        if action_mask is not None:
+            action_mask_tensor = torch.FloatTensor(action_mask).unsqueeze(0)
+            act_values = self.model(state, mask=action_mask_tensor)
+        else:
+            act_values = self.model(state)
+            # Only consider the current valid action space
+            act_values = act_values[:, :self.current_action_size]
+            
         return torch.argmax(act_values[0]).item()
 
     def replay(self):
@@ -108,6 +123,10 @@ class DQNAgent:
         else:
             print(f"No checkpoint found at {filepath}")
 
+    def update_action_size(self, action_size):
+        """Update the current action size without changing the model architecture."""
+        self.current_action_size = min(action_size, self.action_size)
+
 def encode_hand(hand, mapping):
     """Encodes a hand of strings into numeric values using a mapping."""
     encoded_hand = []
@@ -127,7 +146,7 @@ if __name__ == "__main__":
     env = DaVinciCodeGameEnvironment()
     # Create a mapping for string cards to numeric values
     unique_cards = set(env.get_all_possible_cards())  # Assuming the environment provides this method
-    print(unique_cards)
+    #print(unique_cards)
     card_mapping = {card: idx for idx, card in enumerate(unique_cards)}
 
     
@@ -136,7 +155,8 @@ if __name__ == "__main__":
     state = env.reset()
     state_size = max_state_size  # Use the fixed maximum state size
     action_size = len(env._get_legal_actions())  # 动作空间大小
-    agent = DQNAgent(state_size, action_size)
+    max_action_size = 150  # Set a maximum action size that is large enough for all possible legal actions
+    agent = DQNAgent(state_size, action_size, max_action_size)  # Pass max_action_size
     episodes = 10000
 
     checkpoint_dir = "d:\\ai4s\\Davinci-Code-Agent\\checkpoints"
@@ -158,10 +178,15 @@ if __name__ == "__main__":
         total_reward = 0
 
         while not done:
-            action = agent.act(state_vector)
             legal_actions = env._get_legal_actions()
+            # Create action mask with the fixed maximum size
+            action_mask = np.ones(agent.action_size, dtype=np.float32)
+            action_mask[:len(legal_actions)] = 0  # Valid actions
+            
+            agent.update_action_size(len(legal_actions))  # Update the current action size
+            action = agent.act(state_vector, action_mask)
             if action >= len(legal_actions):
-                action = random.choice(range(len(legal_actions)))  # 防止非法动作
+                action = random.choice(range(len(legal_actions)))  # Ensure the action is valid
             chosen_action = legal_actions[action]
 
             next_state, reward, done, _ = env.step(chosen_action)
@@ -181,6 +206,6 @@ if __name__ == "__main__":
 
         agent.replay()
 
-        # Save checkpoint every 100 episodes
-        if (e + 1) % 1000 == 0:
+        # Save checkpoint every 500 episodes
+        if (e + 1) % 500 == 0:
             agent.save_checkpoint(checkpoint_path)

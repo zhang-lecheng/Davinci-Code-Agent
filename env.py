@@ -428,15 +428,17 @@ class DaVinciCodeGameEnvironment:
                  return self._handle_step_error(f"无效的放置动作格式: {action}", player_id)
 
             # 揭示状态取决于玩家是否刚刚猜对 (_can_guess_again)
-            reveal_status = not self._can_guess_again
+            reveal_status = not self._can_guess_again 
             try:
                 insert_pos = self.insert_card(player_id, drawn_card, reveal=reveal_status)
                 reveal_text = "(已揭示)" if reveal_status else "(隐藏)"
                 self.history.append(f"玩家 {player_id} 在位置 {insert_pos} 放置了 {drawn_card} {reveal_text}。")
             except Exception as e:
                  return self._handle_step_error(f"放置动作插入卡牌时出错: {e}", player_id)
-
-            reward = 0.0 # 放置的中性奖励
+            if reveal_status:
+                reward = -0.1
+            else:
+                reward = 0.00 # 放置的中性奖励
 
             # 结束回合：重置标志，切换玩家，为下一位玩家抽牌
             self._drawn_card = None

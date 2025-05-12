@@ -652,6 +652,85 @@ def load_opponent_model_and_tokenizer():
     st.write("模型和分词器占位符准备就绪。")
     return model, tokenizer_func, vocab_info, device
 
+# --- Import RL Models ---
+from DQN import DQNAgent, create_masked_state, encode_hand
+from PPO import PPOAgent, Memory
+import numpy as np
+# --- Add Model Selection ---
+st.sidebar.title("模型选择")
+model_type = st.sidebar.selectbox("选择对手模型", ["Transformer", "DQN", "PPO"])
+
+# --- Load RL Models ---
+@st.cache_resource
+def load_rl_model_and_components(model_type, state_size, action_size, checkpoint_dir):
+    """Load the selected RL model and its components."""
+    if model_type == "DQN":
+        agent = DQNAgent(state_size, action_size)
+        checkpoint_path = os.path.join(checkpoint_dir, "dqn_checkpoint.pth")
+        agent.load_checkpoint(checkpoint_path)
+        return agent, None  # DQN does not use memory
+    elif model_type == "PPO":
+        agent = PPOAgent(state_size, action_size)
+        memory = Memory()
+        checkpoint_path = os.path.join(checkpoint_dir, "ppo_checkpoint.pth")
+        agent.load_checkpoint(checkpoint_path)
+        return agent, memory
+    return None, None
+
+# --- Initialize RL Models ---
+checkpoint_dir = "d:\\ai4s\\Davinci-Code-Agent\\checkpoints"
+max_state_size = 28  # 12*2+2+2
+state_size = max_state_size
+action_size = len(DaVinciCodeGameEnvironment().get_all_possible_cards()) + 1  # +1 for 'place' action
+rl_agent, rl_memory = load_rl_model_and_components(model_type, state_size, action_size, checkpoint_dir)
+
+# --- Modify Opponent Logic ---
+def run_opponent_turn_rl(env, current_state, thinking_placeholder, model_type, rl_agent, rl_memory):
+    """Run the opponent's turn using the selected RL model."""
+    opponent_player_id = current_state.get('current_player')
+    if opponent_player_id != OPPONENT_PLAYER_ID:
+        thinking_placeholder.empty()
+        return current_state, "错误：非对手回合调用了对手逻辑。"
+
+    thinking_placeholder.info(f"对手 (玩家 {opponent_player_id}) 正在操作...")
+    unique_cards = set(env.get_all_possible_cards())
+    card_mapping = {card: idx for idx, card in enumerate(unique_cards)}
+    state_vector = np.concatenate([
+        np.array(encode_hand(current_state['hand'], card_mapping), dtype=np.float32),
+        np.array(encode_hand(current_state['opponent_hand_visible'], card_mapping), dtype=np.float32),
+        np.array([current_state['deck_size'], current_state['current_player']], dtype=np.float32)
+    ])
+    state_vector, mask = create_masked_state(state_vector, max_state_size)
+
+    legal_actions = env._get_legal_actions()
+    if model_type == "DQN":
+        # Create action mask with the fixed maximum size
+        action_mask = np.ones(rl_agent.action_size, dtype=np.float32)
+        action_mask[:len(legal_actions)] = 0  # Valid actions
+        
+        rl_agent.update_action_size(len(legal_actions))  # Update the current action size
+        action = rl_agent.act(state_vector, action_mask)
+    elif model_type == "PPO":
+        # Similar changes for PPO if needed
+        action = rl_agent.select_action(state_vector, rl_memory)
+    else:
+        return current_state, "错误：无效的模型类型。"
+
+    # Ensure the action is valid
+    if action >= len(legal_actions):
+        action = random.choice(range(len(legal_actions)))
+    chosen_action = legal_actions[action]
+
+    try:
+        next_state, reward, done, _ = env.step(chosen_action)
+        if model_type == "PPO":
+            rl_memory.rewards.append(reward)
+            rl_memory.is_terminals.append(done)
+        thinking_placeholder.empty()
+        return next_state, f"对手执行了动作: {chosen_action}，奖励: {reward:.2f}"
+    except Exception as e:
+        thinking_placeholder.empty()
+        return current_state, f"执行对手动作时出错: {e}"
 
 # --- Streamlit 应用主逻辑 ---
 # (基本保持不变, 除了加载模型和调用 run_opponent_turn)
@@ -765,8 +844,11 @@ is_human_turn = (state.get('current_player') == HUMAN_PLAYER_ID)
 if not is_human_turn and not state.get('game_over', False):
     thinking_placeholder = st.empty()
     try:
-        model_components = (model, tokenizer, vocab_info, device)
-        new_opponent_state, opponent_message = run_opponent_turn(env, state, thinking_placeholder, model_components)
+        if model_type == "Transformer":
+            model_components = (model, tokenizer, vocab_info, device)
+            new_opponent_state, opponent_message = run_opponent_turn(env, state, thinking_placeholder, model_components)
+        else:
+            new_opponent_state, opponent_message = run_opponent_turn_rl(env, state, thinking_placeholder, model_type, rl_agent, rl_memory)
         st.session_state.game_state = new_opponent_state; st.session_state.message = opponent_message; st.session_state.selected_guess_index = None
         st.rerun()
     except Exception as e: thinking_placeholder.empty(); st.error(f"处理对手回合时发生意外错误: {e}")
